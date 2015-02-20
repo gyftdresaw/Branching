@@ -160,6 +160,8 @@ int main(int argc, char const ** argv){
   // construct waiting time function 
   std::exponential_distribution<double> exp(0.45);
   std::function<double()> exp_wt = [&](){return exp(gen);};
+  std::gamma_distribution<double> gam(6.0,0.2);
+  std::function<double()> gam_wt = [&](){return gam(gen);};
   std::function<double()> default_waiting = [](){return 1.0;};
 
   // construct simple number of progeny produced per division
@@ -173,10 +175,10 @@ int main(int argc, char const ** argv){
   }
 
   int ntrials = 200;
-  std::string filename = "results/basic_ncell_exp045_p3.txt";
+  std::string filename = "results/basic_ncell_gam6_02_p3.txt";
   for (int i = 0; i < ntrials; ++i) {
     auto Nlst = std::make_shared<NCellListener>(times,1e-6);
-    BProcess<BasicCell> bp(1,exp_wt,default_progeny);
+    BProcess<BasicCell> bp(1,gam_wt,default_progeny);
     bp.add_listener(Nlst);
   
     bp.run(dmax,1e8);
