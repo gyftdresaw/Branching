@@ -65,6 +65,9 @@ std::vector< std::shared_ptr<Cell> > BasicCell::perform_next_event()
 
 /*
  * Record number of cells at each event time 
+ *
+ * [TODO I think the time/event based inputs could be refactored 
+ * or even inherited more coherently]
  */
 class NCellListener : public Listener {
 public:
@@ -74,16 +77,14 @@ public:
   // intialize according to whether times are given or to be determined
   void init(double time,std::vector< std::shared_ptr<Cell> > &cells)
   {
+    // record times aren't given a priori 
     if (!times_set) {
-      times.push_back(time);
-      N.push_back(cells.size());
+      times.push_back(time); // simply set starting time as the only record time
     }
-    else {
-      N = std::vector<unsigned int>(times.size(),0);
-      while (times[tindex] < time && !AlmostEqual(times[tindex],time,prc)) {++tindex;}
-      // current index is start
-      N[tindex] += cells.size();
-    }
+    N = std::vector<unsigned int>(times.size(),0);
+    while (times[tindex] < time && !AlmostEqual(times[tindex],time,prc)) {++tindex;}
+    // current index is start
+    N[tindex] += cells.size();
   }
 
   // will actually simply ignore pop_event and account for cell removed in push_event
@@ -92,27 +93,22 @@ public:
   {
     if (!times_set) {
       // update by event
-      if (AlmostEqual(time,times.back(),prc)){
-	// update last record
-	N.back() = N.back() + new_cells.size() - 1;
-      }
-      else {
-	times.push_back(time);
-	N.push_back(N.back() + new_cells.size() - 1); // account for cell removed
+      if (!AlmostEqual(time,times.back(),prc)){
+	times.push_back(time); // add new time entry
+	N.push_back(N.back()); // add new N entry
       }
     }
-    else {
-      // update according to time
-      while (times[tindex] < time && !AlmostEqual(times[tindex],time,prc) &&
-	     tindex < int(times.size()) - 1) {
-	  ++tindex;
-	  N[tindex] = N[tindex - 1];
-      }
-      if (times[tindex] > time || AlmostEqual(times[tindex],time,prc)) {
-	N[tindex] += new_cells.size() - 1;
-      }
+    // update according to time
+    while (times[tindex] < time && !AlmostEqual(times[tindex],time,prc) &&
+	   tindex < int(times.size()) - 1) {
+      ++tindex;
+      N[tindex] = N[tindex - 1];
+    }
+    if (times[tindex] > time || AlmostEqual(times[tindex],time,prc)) {
+      N[tindex] += new_cells.size() - 1;
     }
   }
+
   // output helpers
   void print()
   {
@@ -147,9 +143,23 @@ private:
   bool AlmostEqual(double a,double b,double EPS=1.0e-15){return std::abs(a - b) < EPS;}
   // for set time based recording
   bool times_set;
-  int tindex = 0;
+  int tindex = 0; // tindex is always pointing to the next record time
 };
 
+/*
+ * Record Age Distribution of cells at set times
+ */
+class AgeListener : public Listener {
+public:
+
+private:
+  std::vector<double> times;
+  // need to store histograms at each time
+  
+  // for set time based recording
+  bool times_set;
+  int tindex = 0;
+};
 
 // basic testing
 int main(int argc, char const ** argv){
@@ -158,7 +168,7 @@ int main(int argc, char const ** argv){
   std::mt19937_64 gen(rd());
 
   // construct waiting time function 
-  std::exponential_distribution<double> exp(0.45);
+  std::exponential_distribution<double> exp(1.0);
   std::function<double()> exp_wt = [&](){return exp(gen);};
   std::gamma_distribution<double> gam(6.0,0.2);
   std::function<double()> gam_wt = [&](){return gam(gen);};
@@ -167,6 +177,14 @@ int main(int argc, char const ** argv){
   // construct simple number of progeny produced per division
   std::function<int()> default_progeny = [](){return 3;};
 
+  // TESTING
+  auto Nlst = std::make_shared<NCellListener>(1e-6);
+  BProcess<BasicCell> bp(1,default_waiting,default_progeny);
+  bp.add_listener(Nlst);
+  bp.run(4.0,1000);
+  Nlst->print();
+  
+  /*
   // construct vector for times to be recorded
   std::vector<double> times;
   double dmax = 14.0;
@@ -191,5 +209,6 @@ int main(int argc, char const ** argv){
     }
     std::cout << i << std::endl;
   }
+  */
   return 0;
 }
