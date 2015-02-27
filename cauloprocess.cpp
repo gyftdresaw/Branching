@@ -64,48 +64,106 @@ std::vector< std::shared_ptr<Cell> > BasicCell::perform_next_event()
 }
 
 /*
+ * TimeKeeper is a helper class for keeping track of time event logic 
+ * in various listener classes
+ */
+class TimeKeeper {
+public:
+  /* two methods of construction:
+   * -- keeping time by event
+   * -- keeping times given 
+   */
+  TimeKeeper(std::vector<double> &t,double PRC=1e-15) : prc(PRC) {times_set = false;}
+  TimeKeeper(std::vector<double> &t,std::vector<double> &ts,double PRC=1e-15) : prc(PRC)
+  {
+    t = ts;
+    times_set = true;
+  }
+  
+   // for use in init, time is starting time
+  void init_times(std::vector<double> &t,double time)
+  {
+    // if event recording, need to add starting time
+    if (!times_set) {
+      t.push_back(time);
+    }
+    
+    // increment tindex until we reach first recording time
+    while (t[tindex] < time && !AlmostEqual(t[tindex],time,prc)) {++tindex;}
+  }
+
+  // for new event, bool returned indicates if we need a new record item
+  // add new time if needed as well
+  bool new_entry(std::vector<double> &t,double time)
+  {
+    if (!times_set) {
+      // update by event
+      if (!AlmostEqual(time,t.back(),prc)){
+	t.push_back(time); // add new time entry
+	return true;
+      }
+    }
+    return false;
+  }
+
+  // step tindex if record time is less than or equal to next event time
+  // if true is returned, tindex has been incremented and record items should be updated
+  bool step_time(std::vector<double> &t,double time)
+  {
+    if (t[tindex] < time && !AlmostEqual(t[tindex],time,prc) &&
+	tindex < int(t.size()) - 1) {
+      ++tindex;
+      return true;
+    }
+    return false;
+  }
+
+  // condition for recording items from new event
+  bool record(std::vector<double> &t,double time)
+  {
+    return (t[tindex] > time || AlmostEqual(t[tindex],time,prc));
+  }
+  int tindex = 0;
+private:
+  double prc;
+  bool times_set;
+  bool AlmostEqual(double a,double b,double EPS=1.0e-15){return std::abs(a - b) < EPS;}
+};
+
+/*
  * Record number of cells at each event time 
- *
- * [TODO I think the time/event based inputs could be refactored 
- * or even inherited more coherently]
  */
 class NCellListener : public Listener {
 public:
   // Constructors
-  NCellListener(double PRC=1e-15) : prc(PRC) {times_set = false;}
-  NCellListener(std::vector<double> &ts,double PRC=1e-15) : times(ts), prc(PRC) {times_set = true;}
+  NCellListener(double PRC=1e-15) : tkeeper(times,PRC) {}
+  NCellListener(std::vector<double> &ts,double PRC=1e-15) : tkeeper(times,ts,PRC) {}
   // intialize according to whether times are given or to be determined
   void init(double time,std::vector< std::shared_ptr<Cell> > &cells)
   {
-    // record times aren't given a priori 
-    if (!times_set) {
-      times.push_back(time); // simply set starting time as the only record time
-    }
-    N = std::vector<unsigned int>(times.size(),0);
-    while (times[tindex] < time && !AlmostEqual(times[tindex],time,prc)) {++tindex;}
-    // current index is start
-    N[tindex] += cells.size();
+    tkeeper.init_times(times,time); // initialize times and tindex 
+    N = std::vector<unsigned int>(times.size(),0); // initialize N records
+    // current tindex is start
+    N[tkeeper.tindex] += cells.size();
   }
 
   // will actually simply ignore pop_event and account for cell removed in push_event
   void pop_event(double time,std::shared_ptr<Cell> c) {};
   void push_event(double time,std::vector< std::shared_ptr<Cell> > &new_cells)
   {
-    if (!times_set) {
-      // update by event
-      if (!AlmostEqual(time,times.back(),prc)){
-	times.push_back(time); // add new time entry
-	N.push_back(N.back()); // add new N entry
-      }
+    // for event based recording, tells us whether we need a new record
+    if (tkeeper.new_entry(times,time)) {
+      N.push_back(N.back()); // add new N entry
     }
-    // update according to time
-    while (times[tindex] < time && !AlmostEqual(times[tindex],time,prc) &&
-	   tindex < int(times.size()) - 1) {
-      ++tindex;
-      N[tindex] = N[tindex - 1];
+
+    // step time and record state until we pass event
+    while (tkeeper.step_time(times,time)) {
+      N[tkeeper.tindex] = N[tkeeper.tindex - 1];
     }
-    if (times[tindex] > time || AlmostEqual(times[tindex],time,prc)) {
-      N[tindex] += new_cells.size() - 1;
+
+    // if event is passed, record result
+    if (tkeeper.record(times,time)) {
+      N[tkeeper.tindex] += new_cells.size() - 1;
     }
   }
 
@@ -138,12 +196,7 @@ public:
 private:
   std::vector<double> times;
   std::vector<unsigned int> N;
-  // for event based recording
-  double prc; // time difference precision
-  bool AlmostEqual(double a,double b,double EPS=1.0e-15){return std::abs(a - b) < EPS;}
-  // for set time based recording
-  bool times_set;
-  int tindex = 0; // tindex is always pointing to the next record time
+  TimeKeeper tkeeper;
 };
 
 /*
@@ -175,13 +228,14 @@ int main(int argc, char const ** argv){
   std::function<double()> default_waiting = [](){return 1.0;};
 
   // construct simple number of progeny produced per division
-  std::function<int()> default_progeny = [](){return 3;};
+  std::function<int()> default_progeny = [](){return 2;};
 
   // TESTING
+  std::vector<double> times = {0.0,1.0,5.0};
   auto Nlst = std::make_shared<NCellListener>(1e-6);
   BProcess<BasicCell> bp(1,default_waiting,default_progeny);
   bp.add_listener(Nlst);
-  bp.run(4.0,1000);
+  bp.run(6.0,1e6);
   Nlst->print();
   
   /*
