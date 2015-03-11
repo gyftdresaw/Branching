@@ -25,6 +25,7 @@
  * -- perform_next_event()
  * -- next_event_time
  */
+template <class WorkingCell>
 class Cell {
 public:
   /* Cell constructor should somehow record current simulation time
@@ -35,18 +36,18 @@ public:
    * Perform pre-determined event for individual cell
    *  -- currently pure virtual that needs to be implemented
    */
-  virtual std::vector< std::shared_ptr<Cell> > perform_next_event() = 0;
-  // Store time of next event to be store -- should ALWAYS have a value
+  virtual std::vector< std::shared_ptr<WorkingCell> > perform_next_event() = 0;
+  // Store time of next event to be stored -- should ALWAYS have a value
   double next_event_time;
 };
 
 /*
  * Test Cell for testing Cell interface
  */
-class TestCell: public Cell {
+class TestCell: public Cell<TestCell> {
 public:
   TestCell(double t=0.0) : time(t) {get_next_event();}
-  std::vector< std::shared_ptr<Cell> > perform_next_event();
+  std::vector< std::shared_ptr<TestCell> > perform_next_event();
 
   // States are useful but not necessary
   // enums actually seem like more trouble than they're worth
@@ -63,10 +64,10 @@ private:
 /* 
  * TestCell Implementation - simply makes two cells upon division
  */
-std::vector< std::shared_ptr<Cell> > TestCell::perform_next_event() 
+std::vector< std::shared_ptr<TestCell> > TestCell::perform_next_event() 
 {
   time = next_event_time;
-  std::vector< std::shared_ptr<Cell> > new_cells;
+  std::vector< std::shared_ptr<TestCell> > new_cells;
   new_cells.emplace_back(std::make_shared<TestCell>(time));
   new_cells.emplace_back(std::make_shared<TestCell>(time));
   
@@ -84,13 +85,14 @@ std::vector< std::shared_ptr<Cell> > TestCell::perform_next_event()
  * We require 3 things to be implemented:
  * -- init(time,cells): initialize listener with time and starting cells
  * -- pop_event(time,cell): provide time and cell of a cell event
- * -- push_event(time,cell): provide time and result of the last pop_event
+ * -- push_event(time,cells): provide time and result of the last pop_event
  */
+template <class WorkingCell>
 class Listener {
 public:
-  virtual void init(double time,std::vector< std::shared_ptr<Cell> > &cells) = 0;
-  virtual void pop_event(double time,std::shared_ptr<Cell> c) = 0;
-  virtual void push_event(double time,std::vector< std::shared_ptr<Cell> > &new_cells) = 0;
+  virtual void init(double time,std::vector< std::shared_ptr<WorkingCell> > &cells) = 0;
+  virtual void pop_event(double time,std::shared_ptr<WorkingCell> c) = 0;
+  virtual void push_event(double time,std::vector< std::shared_ptr<WorkingCell> > &new_cells) = 0;
 };
 
 /***************************
@@ -105,7 +107,7 @@ public:
  *
  * DefaultCell is simply the default Cell for easy process construction
  */
-template <class DefaultCell>
+template <class WorkingCell,class DefaultCell = WorkingCell>
 class BProcess {
 public:
   // Simple initialization with provided number of default cells
@@ -121,7 +123,7 @@ public:
   }
 
   // Fancier initialization with provided Cell vector
-  BProcess(std::vector< std::shared_ptr<Cell> >& initial_cells) 
+  BProcess(std::vector< std::shared_ptr<WorkingCell> >& initial_cells) 
   {
     for (auto ci : initial_cells){
       EHeap.push(ci);
@@ -135,7 +137,7 @@ public:
   unsigned int num_cells(){return EHeap.size();}
 
   // only add listener, will initialize on run
-  void add_listener(std::shared_ptr<Listener> lst)
+  void add_listener(std::shared_ptr< Listener<WorkingCell> > lst)
   {
     LArray.push_back(lst);
   }
@@ -146,19 +148,19 @@ private:
   struct CellComp
   {
     CellComp(){};
-    bool operator() (std::shared_ptr<Cell> a,std::shared_ptr<Cell> b) const
+    bool operator() (std::shared_ptr<WorkingCell> a,std::shared_ptr<WorkingCell> b) const
     {
       return (a->next_event_time > b->next_event_time);
     }
   };
 
   // Central data structure for ordering events
-  std::priority_queue< std::shared_ptr<Cell>,
-		       std::vector< std::shared_ptr<Cell> >,
+  std::priority_queue< std::shared_ptr<WorkingCell>,
+		       std::vector< std::shared_ptr<WorkingCell> >,
 		       CellComp > EHeap;
   
   // vector for holding simulation listeners
-  std::vector< std::shared_ptr<Listener> > LArray;
+  std::vector< std::shared_ptr< Listener<WorkingCell> > > LArray;
   void init_listeners(double time); 
 };
 
@@ -167,12 +169,12 @@ private:
 /*
  * Branching Process Implementation - initialize listeners
  */
-template <class DefaultCell>
-void BProcess<DefaultCell>::init_listeners(double time)
+template <class WorkingCell, class DefaultCell>
+void BProcess<WorkingCell,DefaultCell>::init_listeners(double time)
 {
   // kind of ugly solution but shouldn't be too much overhead for initialization
   auto hcopy = EHeap; // copy of EHeap
-  std::vector< std::shared_ptr<Cell> > init_cells;
+  std::vector< std::shared_ptr<WorkingCell> > init_cells;
   while (!hcopy.empty()){
     init_cells.push_back(hcopy.top());
     hcopy.pop();
@@ -187,19 +189,20 @@ void BProcess<DefaultCell>::init_listeners(double time)
 /*
  * Branching Process Implementation - main simulation loop
  */
-template <class DefaultCell>
-void BProcess<DefaultCell>::run(double TMAX,unsigned int NMAX)
+template <class WorkingCell, class DefaultCell>
+void BProcess<WorkingCell,DefaultCell>::run(double TMAX,unsigned int NMAX)
 {
   // current time in simulation 
   double current_time = 0.0;
   init_listeners(current_time); // initialize listeners
   while (current_time < TMAX && num_cells() < NMAX) {
-    std::shared_ptr<Cell> next_cell = EHeap.top(); // grab next cell event
+    std::shared_ptr<WorkingCell> next_cell = EHeap.top(); // grab next cell event
+    // update current time to next event time
+    current_time = next_cell->next_event_time;
     for (auto l : LArray) {l->pop_event(current_time,next_cell);}
     EHeap.pop(); // remove that element
 
-    current_time = next_cell->next_event_time;
-    std::vector< std::shared_ptr<Cell> > new_cells = next_cell->perform_next_event();
+    std::vector< std::shared_ptr<WorkingCell> > new_cells = next_cell->perform_next_event();
     for (auto l: LArray) {l->push_event(current_time,new_cells);}
     for (auto new_cell : new_cells) {EHeap.push(new_cell);}
   }
