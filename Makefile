@@ -4,7 +4,7 @@
 CC=g++-4.9
 
 # compiler flags
-CFLAGS=-W -Wno-long-long -pedantic -Wno-variadic-macros -std=c++11
+CFLAGS=-W -Wno-long-long -pedantic -Wno-variadic-macros -std=c++11 -O3
 
 INCLUDE=
 
